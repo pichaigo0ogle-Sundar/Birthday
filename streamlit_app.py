@@ -36,11 +36,14 @@ if "stage" not in st.session_state:
 # HELPER — render raw HTML via st.iframe + base64 data URI
 # (replaces deprecated st.components.v1.html)
 # ─────────────────────────────────────────────────────────────────
-def render_html(html: str, height: int = 650, scrolling: bool = False) -> None:
+def render_html(html: str, height: int = 5000, scrolling: bool = False) -> None:
   # Ensure every embedded page stays fixed to the frame and does not scroll.
   if '<style>' in html:
-    html = html.replace('<style>', '<style>\nhtml,body{height:100vh;overflow:hidden;}\n', 1)
-  # Use Streamlit components to render raw HTML safely
+    html = html.replace('<style>', '<style>\nhtml,body{height:100%;overflow:hidden;}\n', 1)
+  # Use Streamlit components to render raw HTML safely.
+  # We intentionally set a very large height (5000) so Streamlit's iframe never
+  # clips the content. The JS layout fixer injected in inject_global_styles()
+  # will resize this iframe to exactly fill the available viewport space.
   try:
     components.html(html, height=height, scrolling=False)
   except Exception:
@@ -72,19 +75,26 @@ def _path_to_data_uri(src: str) -> str:
     except Exception:
         return src
 
-
 def _get_music_data_uri() -> str:
-    """Load birthday_music.mp3 and return as data URI, or empty string if not found."""
-    music_path = os.path.join(os.path.dirname(__file__), 'assets', 'birthday_music.mp3')
+    music_path = os.path.join(
+        os.path.dirname(__file__),
+        "assets",
+        "birthday_music.mp3"
+    )
+
     if not os.path.isfile(music_path):
         return ""
+
     try:
-        with open(music_path, 'rb') as fh:
+        with open(music_path, "rb") as fh:
             data = fh.read()
-        return f"data:audio/mpeg;base64,{base64.b64encode(data).decode('utf-8')}"
+
+        encoded = base64.b64encode(data).decode()
+
+        return f"data:audio/mpeg;base64,{encoded}"
+
     except Exception:
         return ""
-
 
 # ─────────────────────────────────────────────────────────────────
 # SHARED CONSTANTS — embedded into every stage
@@ -265,15 +275,65 @@ def inject_global_styles() -> None:
     section[data-testid="stSidebar"],
     [data-testid="collapsedControl"] { visibility:hidden!important; display:none!important; }
 
-    .stApp, .stAppViewContainer { background:#030312!important; }
-    .block-container { padding:0!important; max-width:100%!important; }
+    html, body, .stApp, .stAppViewContainer {
+      background:#030312!important;
+      height:100vh!important;
+      overflow:hidden!important;
+      margin:0!important; padding:0!important;
+    }
+
+    /* Make the Streamlit block container fill 100vh as a flex column */
+    .block-container {
+      padding: 0 !important;
+      max-width: 100% !important;
+      height: 100vh !important;
+      display: flex !important;
+      flex-direction: column !important;
+      overflow: hidden !important;
+    }
+
+    /* Root vertical block — full height flex column, no gaps */
+    div[data-testid="stVerticalBlock"]:not(div[data-testid="column"] div[data-testid="stVerticalBlock"]) {
+      height: 100vh !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 0px !important;
+      overflow: hidden !important;
+    }
+    div[data-testid="stVerticalBlock"]:not(div[data-testid="column"] div[data-testid="stVerticalBlock"]) > div {
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* The element-container that wraps the main stage iframe grows to fill all remaining space */
+    div[data-testid="element-container"]:has(> div > iframe:not([style*="display: none"])) {
+      flex: 1 1 0 !important;
+      min-height: 0 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      overflow: hidden !important;
+    }
+    div[data-testid="element-container"]:has(> div > iframe:not([style*="display: none"])) > div {
+      flex: 1 1 0 !important;
+      min-height: 0 !important;
+      display: flex !important;
+      flex-direction: column !important;
+    }
+
+    /* All iframes fill their container; JS will override height on the stage one */
+    iframe {
+      width: 100% !important;
+      border: none !important;
+      display: block !important;
+    }
 
     /* Progress strip */
     .pg-strip {
       display:flex; justify-content:center; align-items:center;
-      gap:10px; padding:12px 20px 8px;
+      gap:10px; padding:10px 20px 8px;
       background:rgba(3,3,18,.98);
       border-bottom:1px solid rgba(139,92,246,.14);
+      flex-shrink: 0;
     }
     .pg-dot {
       width:9px; height:9px; border-radius:50%;
@@ -299,8 +359,107 @@ def inject_global_styles() -> None:
       box-shadow:0 0 72px rgba(124,58,237,.9), 0 0 135px rgba(37,99,235,.3)!important;
     }
     .stButton > button:active { transform:translateY(-1px) scale(1.02)!important; }
-    div[data-testid="stHorizontalBlock"] { padding:0!important; gap:0!important; }
+    div[data-testid="stHorizontalBlock"] {
+      padding:0!important; gap:0!important;
+      background:rgba(3,3,18,.98)!important;
+      border-top:1px solid rgba(139,92,246,.12)!important;
+      flex-shrink:0!important;
+    }
+    /* Kill any extra space Streamlit adds after the nav row */
+    div[data-testid="stHorizontalBlock"] ~ div,
+    div[data-testid="stHorizontalBlock"] + div { display:none!important; }
+    /* Ensure nothing overflows the viewport */
+    * { max-height: 100vh; }
+    .stApp, .block-container,
+    div[data-testid="stVerticalBlock"]:not(div[data-testid="column"] div[data-testid="stVerticalBlock"]) {
+      max-height: 100vh !important;
+    }
     </style>
+
+    <script>
+    /* ── Fullscreen Layout Fixer ──────────────────────────────────────────────
+       Streamlit sets an inline style height on every iframe it creates, which
+       CSS alone cannot override. This script directly measures what height the
+       stage iframe SHOULD be (viewport minus progress bar + nav bar) and applies
+       it as an inline style, overriding Streamlit's value.
+       A MutationObserver re-runs the layout whenever Streamlit re-renders.
+    ─────────────────────────────────────────────────────────────────────────── */
+    (function() {
+      'use strict';
+
+      function applyLayout() {
+        try {
+          var vh = window.innerHeight;
+
+          /* ── measure chrome elements ── */
+          var pgStrip = document.querySelector('.pg-strip');
+          var pgH = pgStrip ? pgStrip.getBoundingClientRect().height : 0;
+
+          /* Nav bar: the stHorizontalBlock that contains Prev/Next buttons */
+          var navH = 0;
+          document.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(function(el) {
+            var h = el.getBoundingClientRect().height;
+            if (h > navH) navH = h;
+          });
+
+          /* ── available height for the stage iframe ── */
+          var availH = Math.max(200, vh - pgH - navH);
+
+          /* ── find the main stage iframe (visible, non-zero, not the music one) ── */
+          var iframes = document.querySelectorAll('iframe');
+          var stageFrame = null;
+          iframes.forEach(function(f) {
+            if (f.id === 'globalBgAudio') return;
+            if (f.style.display === 'none') return;
+            if (f.offsetWidth === 0) return;  /* hidden music frame */
+            /* The largest visible iframe is the stage */
+            if (!stageFrame || f.offsetWidth > stageFrame.offsetWidth) {
+              stageFrame = f;
+            }
+          });
+
+          if (stageFrame) {
+            stageFrame.style.setProperty('height', availH + 'px', 'important');
+            stageFrame.style.setProperty('min-height', availH + 'px', 'important');
+            stageFrame.style.setProperty('max-height', availH + 'px', 'important');
+            /* Also fix its wrapper containers */
+            var wrapper = stageFrame.parentElement;
+            while (wrapper && wrapper !== document.body) {
+              if (wrapper.dataset && wrapper.dataset.testid === 'stVerticalBlock') break;
+              wrapper.style.setProperty('height', availH + 'px', 'important');
+              wrapper.style.setProperty('min-height', '0', 'important');
+              wrapper.style.setProperty('overflow', 'hidden', 'important');
+              wrapper = wrapper.parentElement;
+            }
+          }
+        } catch(e) { console.warn('Layout fixer:', e); }
+      }
+
+      /* Run now and after brief delays to catch Streamlit's late renders */
+      applyLayout();
+      setTimeout(applyLayout, 100);
+      setTimeout(applyLayout, 400);
+      setTimeout(applyLayout, 900);
+
+      /* Re-run on every window resize */
+      window.addEventListener('resize', applyLayout);
+
+      /* Watch for Streamlit DOM mutations (reruns) and re-apply layout */
+      var observer = new MutationObserver(function(mutations) {
+        var hasFrameChange = mutations.some(function(m) {
+          return Array.from(m.addedNodes).some(function(n) {
+            return n.nodeType === 1 && (n.tagName === 'IFRAME' || n.querySelector && n.querySelector('iframe'));
+          });
+        });
+        if (hasFrameChange) {
+          setTimeout(applyLayout, 80);
+          setTimeout(applyLayout, 350);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
 
@@ -325,8 +484,6 @@ def show_progress(current: int, total: int = 7) -> None:
 # STAGE 1 — CINEMATIC WELCOME
 # ═══════════════════════════════════════════════════════════════
 def stage_1() -> None:
-    music_uri = _get_music_data_uri()
-    music_source = f'<source src="{music_uri}" type="audio/mpeg">' if music_uri else '<!-- Music file not found -->'
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -343,39 +500,42 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
   100%{{transform:scale(1.2) translate(26px,-24px);opacity:.9;}}}}
 .star{{position:fixed;background:#fff;border-radius:50%;animation:tw ease-in-out infinite;z-index:1;}}
 @keyframes tw{{0%,100%{{opacity:.06;transform:scale(1);}}50%{{opacity:.95;transform:scale(1.7);}}}}
-.wrap{{position:relative;z-index:10;text-align:center;padding:40px 24px;}}
+.wrap{{position:relative;z-index:10;text-align:center;padding:clamp(10px, 3.5vh, 32px) 24px;}}
 .eyebrow{{font-family:'Cinzel',serif;font-size:12px;letter-spacing:11px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:28px;animation:fadeUp 1s ease .5s both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(8px, 2.2vh, 20px);animation:fadeUp 1s ease .5s both;opacity:0;}}
 @keyframes fadeUp{{from{{opacity:0;transform:translateY(24px);}}to{{opacity:1;transform:translateY(0);}}}}
-.title{{font-family:'Cinzel Decorative',serif;font-size:clamp(26px,5.5vw,68px);
+.title{{font-family:'Cinzel Decorative',serif;font-size:clamp(22px,6.8vh,48px);
   font-weight:900;line-height:1.2;
   background:linear-gradient(135deg,#f0eaff,#c4b5fd,#818cf8,#60a5fa,#a78bfa);
   background-size:300% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
   background-clip:text;filter:drop-shadow(0 0 42px rgba(139,92,246,.8));
-  animation:fadeUp 1s ease .8s both,titleSh 5s linear 2s infinite;opacity:0;margin-bottom:18px;}}
+  animation:fadeUp 1s ease .8s both,titleSh 5s linear 2s infinite;opacity:0;margin-bottom:clamp(8px, 1.8vh, 18px);}}
 @keyframes titleSh{{from{{background-position:0% center;}}to{{background-position:300% center;}}}}
 .divider{{width:180px;height:1px;
   background:linear-gradient(90deg,transparent,#8b5cf6,#fbbf24,#3b82f6,transparent);
-  margin:20px auto;animation:fadeUp 1s ease 1.1s both;opacity:0;}}
+  margin:clamp(8px, 2vh, 16px) auto;animation:fadeUp 1s ease 1.1s both;opacity:0;}}
 .subtitle{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(15px,2.2vw,22px);color:rgba(196,181,253,.85);
-  margin-bottom:52px;animation:fadeUp 1s ease 1.3s both;opacity:0;}}
+  font-size:clamp(13px,2.2vh,18px);color:rgba(196,181,253,.85);
+  margin-bottom:clamp(20px, 4vh, 40px);animation:fadeUp 1s ease 1.3s both;opacity:0;}}
 .ring{{position:absolute;border-radius:50%;border:1px solid rgba(139,92,246,.22);
   top:50%;left:50%;transform:translate(-50%,-50%);
   animation:ringEx 4s ease-out infinite;pointer-events:none;}}
-@keyframes ringEx{{0%{{width:0;height:0;opacity:.9;}}100%{{width:650px;height:650px;opacity:0;}}}}
+@keyframes ringEx{{0%{{width:0;height:0;opacity:.9;}}100%{{width:550px;height:550px;opacity:0;}}}}
 .music-badge{{
   position:fixed;top:16px;right:20px;z-index:50;
   display:flex;align-items:center;gap:8px;
-  background:rgba(255,255,255,.05);backdrop-filter:blur(18px);
-  border:1px solid rgba(139,92,246,.28);border-radius:30px;
-  padding:8px 18px;cursor:pointer;transition:all .3s ease;
+  background:rgba(139,92,246,.22);backdrop-filter:blur(18px);
+  border:1px solid rgba(139,92,246,.55);border-radius:30px;
+  padding:8px 18px;
   font-family:'Cinzel',serif;font-size:11px;letter-spacing:3px;
-  color:rgba(196,181,253,.8);animation:fadeUp 1s ease 2.2s both;opacity:0;}}
-.music-badge:hover{{background:rgba(139,92,246,.18);border-color:rgba(139,92,246,.6);
-  box-shadow:0 0 22px rgba(139,92,246,.32);}}
-.music-icon{{font-size:16px;animation:mBob .8s ease-in-out infinite alternate;}}
-@keyframes mBob{{from{{transform:scale(1);}}to{{transform:scale(1.25);}}}}
+  color:rgba(196,181,253,.95);
+  animation:fadeUp 1s ease 2.2s both,badgeGlow 2.5s ease-in-out 3s infinite alternate;opacity:0;
+  pointer-events:none;}}
+@keyframes badgeGlow{{
+  0%{{box-shadow:0 0 10px rgba(139,92,246,.4);border-color:rgba(139,92,246,.4);}}
+  100%{{box-shadow:0 0 28px rgba(139,92,246,.85),0 0 50px rgba(192,38,211,.4);border-color:rgba(192,38,211,.7);}}}}
+.music-icon{{font-size:16px;animation:mBob .7s ease-in-out infinite alternate;}}
+@keyframes mBob{{from{{transform:scale(1);}}to{{transform:scale(1.3) rotate(15deg);}}}}
 .scroll-hint{{display:none;}}
 </style></head><body>
 <canvas id="bgCvs"></canvas>
@@ -390,9 +550,9 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 <div class="ring" style="animation-delay:0s;"></div>
 <div class="ring" style="animation-delay:1.4s;"></div>
 <div class="ring" style="animation-delay:2.8s;"></div>
-<div class="music-badge" onclick="toggleMusic()" id="musicBadge">
-  <span class="music-icon" id="mIcon">♪</span>
-  <span id="mLabel">Music Off</span>
+<div class="music-badge" id="musicBadge">
+  <span class="music-icon">♫</span>
+  <span>Music On</span>
 </div>
 <div class="stage-root wrap">
   <p class="eyebrow">✦ &nbsp; A Surprise Awaits &nbsp; ✦</p>
@@ -400,10 +560,6 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
   <div class="divider"></div>
   <p class="subtitle">An experience crafted with warmth, wonder &amp; pure joy</p>
 </div>
-<!-- scroll prompt removed: page is fixed and non-scrollable -->
-<audio id="bgAudio" loop>
-  {music_source}
-</audio>
 <script>
 {PARTICLE_JS}
 (function(){{
@@ -415,24 +571,51 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
     c.appendChild(s);
   }}
 }})();
-var musicOn=false;
-function toggleMusic(){{
-  musicOn=!musicOn;
-  var bgPlayer=document.getElementById('bgMusicPlayer');
-  var stagePlayer=document.getElementById('bgAudio');
-  var ic=document.getElementById('mIcon'),lb=document.getElementById('mLabel');
-  if(musicOn){{
-    if(bgPlayer)bgPlayer.play().catch(function(){{}});
-    if(stagePlayer)stagePlayer.play().catch(function(){{}});
-    ic.textContent='♫';lb.textContent='Music On';
+(function(){{
+  try {{
+    var parentDoc = window.parent.document;
+    var a = parentDoc ? parentDoc.getElementById('globalBgAudio') : null;
+    var badge = document.getElementById('musicBadge');
+    var ic = document.getElementById('mIcon'), lb = document.getElementById('mLabel');
+    if (!badge || !a) return;
+    
+    function updateBadge() {{
+      if (a.paused) {{
+        ic.textContent = '♪';
+        lb.textContent = 'Music Off';
+        badge.style.background = 'rgba(255,255,255,.05)';
+      }} else {{
+        ic.textContent = '♫';
+        lb.textContent = 'Music On';
+        badge.style.background = 'rgba(139,92,246,.18)';
+      }}
+    }}
+    
+    updateBadge();
+    var intv = setInterval(updateBadge, 400);
+    
+    window.toggleMusic = function() {{
+      if (a.paused) {{
+        a.play().then(function() {{
+          localStorage.setItem('bgMusicPlaying_v1', '1');
+          updateBadge();
+          var pBtn = parentDoc.getElementById('musicEnableBtn');
+          if (pBtn) pBtn.remove();
+        }}).catch(function(err){{}});
+      }} else {{
+        a.pause();
+        localStorage.setItem('bgMusicPlaying_v1', '0');
+        updateBadge();
+      }}
+    }};
+    
+    window.addEventListener('unload', function() {{
+      clearInterval(intv);
+    }});
+  }} catch(e) {{
+    console.error("Badge sync error:", e);
   }}
-  else{{
-    if(bgPlayer)bgPlayer.pause();
-    if(stagePlayer)stagePlayer.pause();
-    ic.textContent='♪';lb.textContent='Music Off';
-  }}
-  try{{localStorage.setItem('bgMusicPlaying_v1', musicOn?'1':'0');}}catch(e){{}}
-}}
+}})();
 {MAGIC_BTN_JS}
 </script>
 </body></html>"""
@@ -461,18 +644,18 @@ def stage_2() -> None:
 body{{background:#030312;min-height:100vh;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;}}
 canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;}}
-.wrap{{position:relative;z-index:10;text-align:center;padding:36px 20px;}}
+.wrap{{position:relative;z-index:10;text-align:center;padding:12px 20px;}}
 .eyebrow{{font-family:'Cinzel',serif;font-size:11px;letter-spacing:10px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:36px;animation:fu .8s ease .2s both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(12px, 3.5vh, 36px);animation:fu .8s ease .2s both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(22px);}}to{{opacity:1;transform:translateY(0);}}}}
 .name-row{{display:flex;justify-content:center;align-items:center;
-  gap:clamp(3px,1.5vw,18px);margin-bottom:24px;
+  gap:clamp(3px,1.5vw,18px);margin-bottom:clamp(8px, 2.5vh, 24px);
   animation:nameZoom 1.2s ease 2.8s both;}}
 @keyframes nameZoom{{from{{transform:scale(1.35);}}to{{transform:scale(1);}}}}
 /* Letter */
 .ltr{{
   font-family:'Cinzel Decorative',serif;
-  font-size:clamp(56px,11vw,132px);font-weight:900;
+  font-size:clamp(40px,11vh,100px);font-weight:900;
   color:var(--gc);display:inline-block;cursor:default;
   text-shadow:0 0 22px var(--gc),0 0 50px var(--gc),0 0 95px var(--gc);
   animation:ltrIn .95s cubic-bezier(.34,1.56,.64,1) var(--del) both,
@@ -499,11 +682,11 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 }}
 .divider{{width:240px;height:1px;
   background:linear-gradient(90deg,transparent,#8b5cf6,#fbbf24,#3b82f6,transparent);
-  margin:18px auto 30px;animation:fu .8s ease 2.2s both;opacity:0;}}
+  margin:clamp(8px, 2vh, 18px) auto clamp(12px, 3vh, 30px);animation:fu .8s ease 2.2s both;opacity:0;}}
 .quote{{max-width:590px;margin:0 auto;animation:fu 1.2s ease 2.6s both;opacity:0;}}
 .ql{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(16px,2.7vw,25px);line-height:1.9;color:rgba(196,181,253,.9);padding:3px 0;}}
-.ql.gold{{color:#fbbf24;font-size:clamp(18px,3.1vw,27px);}}
+  font-size:clamp(14px,2.5vh,22px);line-height:1.7;color:rgba(196,181,253,.9);padding:2px 0;}}
+.ql.gold{{color:#fbbf24;font-size:clamp(16px,2.8vh,24px);}}
 </style></head><body>
 <canvas id="bgCvs"></canvas>
 <div class="stage-root wrap">
@@ -598,43 +781,77 @@ def stage_3() -> None:
 @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@400;700&family=Dancing+Script:wght@600&display=swap');
 {ENTRY_CSS}
 *{{margin:0;padding:0;box-sizing:border-box;}}
-body{{background:#030312;min-height:100vh;overflow:hidden;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;}}
+html,body{{width:100%;height:100%;overflow:hidden;background:#030312;}}
+body{{display:flex;flex-direction:column;align-items:stretch;position:relative;}}
 canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;}}
-.wrap{{position:relative;z-index:10;width:100%;text-align:center;padding:16px 0;}}
+
+/* ── Main wrapper fills the full iframe height ── */
+.wrap{{
+  position:relative;z-index:10;width:100%;
+  height:100%;min-height:100vh;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  padding:clamp(6px,1.5vh,18px) 0;
+  gap:0;
+}}
+
+/* Header block — fixed natural height */
+.hdr{{text-align:center;flex-shrink:0;padding-bottom:clamp(4px,1vh,12px);}}
 .eyebrow{{font-family:'Cinzel',serif;font-size:11px;letter-spacing:10px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:10px;animation:fu .8s ease both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(3px,.8vh,8px);
+  animation:fu .8s ease both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(20px);}}to{{opacity:1;transform:translateY(0);}}}}
-.sec-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(20px,3.8vw,44px);
+.sec-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(15px,3.5vh,34px);
   font-weight:900;background:linear-gradient(135deg,#f0eaff,#c4b5fd,#818cf8);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   filter:drop-shadow(0 0 26px rgba(139,92,246,.72));
-  margin-bottom:24px;animation:fu .8s ease .25s both;opacity:0;}}
-/* Gallery rows */
-.gallery-row{{width:100%;overflow:hidden;padding:12px 0;
+  margin-bottom:0;animation:fu .8s ease .25s both;opacity:0;}}
+
+/* ── Gallery area — expands to fill ALL remaining space ── */
+.gallery-area{{
+  flex:1 1 0;
+  width:100%;
+  display:flex;flex-direction:column;
+  justify-content:space-evenly;
+  align-items:center;
+  overflow:hidden;
+  gap:clamp(4px,1vh,12px);
+  padding:clamp(4px,1vh,12px) 0;
+}}
+
+/* Gallery rows — each row takes equal share */
+.gallery-row{{
+  flex:1 1 0;
+  width:100%;
+  overflow:hidden;
+  position:relative;
+  min-height:0;
+  display:flex;
+  align-items:center;
   mask-image:linear-gradient(90deg,transparent 0%,#000 7%,#000 93%,transparent 100%);
-  -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 7%,#000 93%,transparent 100%);}}
-.track{{display:flex;gap:22px;width:max-content;}}
+  -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 7%,#000 93%,transparent 100%);
+}}
+.track{{display:flex;gap:14px;width:max-content;align-items:center;}}
 .track-fwd{{animation:scrollFwd 38s linear infinite;}}
 .track-rev{{animation:scrollRev 42s linear infinite;}}
 .track-fwd:hover,.track-rev:hover{{animation-play-state:paused;}}
-@keyframes scrollFwd{{0%{{transform:translateX(0);}}      100%{{transform:translateX(-50%);}}}}
-@keyframes scrollRev{{0%{{transform:translateX(-50%);}}  100%{{transform:translateX(0);}}  }}
-/* Polaroid card */
+@keyframes scrollFwd{{0%{{transform:translateX(0);}}100%{{transform:translateX(-50%);}}}}
+@keyframes scrollRev{{0%{{transform:translateX(-50%);}}100%{{transform:translateX(0);}}}}
+
+/* Polaroid card — width & image height set dynamically by JS */
 .pc{{
-  flex-shrink:0;width:192px;
+  flex-shrink:0;
   background:rgba(255,255,255,.95);
-  padding:12px 12px 40px;border-radius:3px;
-  box-shadow:0 14px 45px rgba(0,0,0,.6);
+  border-radius:3px;
+  box-shadow:0 10px 30px rgba(0,0,0,.6);
   transform:rotate(var(--r));
-  transition:box-shadow .4s ease;
   cursor:pointer;position:relative;
   animation:floatPol var(--fd) ease-in-out var(--fdel) infinite;
   will-change:transform;
 }}
 @keyframes floatPol{{
-  0%,100%{{transform:rotate(var(--r)) translateY(0);  }}
-  50%    {{transform:rotate(var(--r)) translateY(-9px);}}
+  0%,100%{{transform:rotate(var(--r)) translateY(0);}}
+  50%    {{transform:rotate(var(--r)) translateY(-7px);}}
 }}
 .pc::after{{
   content:'';position:absolute;inset:-2px;border-radius:3px;
@@ -643,19 +860,26 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 }}
 .pc:hover::after{{opacity:1;}}
 .pc-img{{position:relative;overflow:hidden;border-radius:2px;}}
-.pc img{{width:100%;height:218px;object-fit:cover;display:block;
+.pc img{{width:100%;display:block;object-fit:cover;
   filter:brightness(.9);transition:filter .5s ease,transform .5s ease;}}
 .pc:hover img{{filter:brightness(1.08);transform:scale(1.06);}}
 .shine{{position:absolute;inset:0;pointer-events:none;transition:background .12s;border-radius:2px;}}
-.caption{{font-family:'Dancing Script',cursive;font-size:14px;color:#555;
-  text-align:center;position:absolute;bottom:10px;left:0;right:0;}}
+.caption{{
+  font-family:'Dancing Script',cursive;color:#555;
+  text-align:center;position:absolute;bottom:0;left:0;right:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px;
+}}
 </style></head><body>
 <canvas id="bgCvs"></canvas>
-<div class="stage-root wrap">
-  <p class="eyebrow">✦ &nbsp; Gallery &nbsp; ✦</p>
-  <h2 class="sec-title">Moments That Feel Special</h2>
-  <div class="gallery-row"><div class="track track-fwd" id="r1"></div></div>
-  <div class="gallery-row" style="margin-top:6px;"><div class="track track-rev" id="r2"></div></div>
+<div class="wrap">
+  <div class="hdr stage-root">
+    <p class="eyebrow">✦ &nbsp; Gallery &nbsp; ✦</p>
+    <h2 class="sec-title">Moments That Feel Special</h2>
+  </div>
+  <div class="gallery-area">
+    <div class="gallery-row"><div class="track track-fwd" id="r1"></div></div>
+    <div class="gallery-row"><div class="track track-rev" id="r2"></div></div>
+  </div>
 </div>
 <script>
 {PARTICLE_JS}
@@ -690,7 +914,34 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
       track.appendChild(card);
     }});
   }}
+  /* ── Compute card sizes from actual rendered row height ── */
+  function applyCardSizes() {{
+    var rows = document.querySelectorAll('.gallery-row');
+    if (!rows.length) return;
+    var rowH = rows[0].getBoundingClientRect().height;
+    /* Image takes 72% of row height; card width ≈ image height × 0.78 */
+    var imgH = Math.max(80, Math.round(rowH * 0.72));
+    var cardW = Math.max(90, Math.round(imgH * 0.80));
+    var topPad = Math.max(6, Math.round(rowH * 0.04));
+    var botPad = Math.max(20, Math.round(rowH * 0.16));
+    var capFS  = Math.max(9, Math.round(rowH * 0.062));
+    document.querySelectorAll('.pc').forEach(function(c) {{
+      c.style.width   = cardW + 'px';
+      c.style.padding = topPad + 'px ' + topPad + 'px ' + botPad + 'px';
+    }});
+    document.querySelectorAll('.pc img').forEach(function(img) {{
+      img.style.height = imgH + 'px';
+    }});
+    document.querySelectorAll('.caption').forEach(function(cap) {{
+      cap.style.fontSize  = capFS + 'px';
+      cap.style.bottom    = Math.max(3, Math.round(rowH * 0.03)) + 'px';
+    }});
+  }}
+
   buildRow(r1,'r1'); buildRow(r2,'r2');
+  /* Run after layout paint */
+  requestAnimationFrame(function() {{ applyCardSizes(); }});
+  window.addEventListener('resize', applyCardSizes);
 }})();
 </script>
 </body></html>"""
@@ -713,7 +964,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 .star{{position:fixed;background:#fff;border-radius:50%;animation:tw ease-in-out infinite;}}
 @keyframes tw{{0%,100%{{opacity:.07;transform:scale(1);}}50%{{opacity:.88;transform:scale(1.55);}}}}
 /* Road */
-.road{{position:fixed;bottom:0;left:0;right:0;height:140px;
+.road{{position:fixed;bottom:0;left:0;right:0;height:clamp(80px, 15vh, 140px);
   background:linear-gradient(180deg,#09090f 0%,#05050b 100%);
   border-top:1px solid rgba(139,92,246,.18);z-index:3;}}
 .road-glow{{position:absolute;top:0;left:0;right:0;height:1px;
@@ -724,9 +975,13 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
   animation:roadScroll .85s linear infinite;}}
 @keyframes roadScroll{{from{{background-position:0 0;}}to{{background-position:68px 0;}}}}
 /* City */
-.city{{position:fixed;bottom:138px;left:0;right:0;height:160px;z-index:2;opacity:.15;}}
+.city{{position:fixed;bottom:clamp(78px, 15vh - 2px, 138px);left:0;right:0;height:clamp(80px, 18vh, 160px);z-index:2;opacity:.15;}}
 /* Bike */
-.bike-wrap{{position:fixed;bottom:72px;z-index:10;animation:ride var(--dur) linear var(--del) infinite;}}
+.bike-wrap{{position:fixed;bottom:clamp(38px, 8vh, 72px);z-index:10;animation:ride var(--dur) linear var(--del) infinite;}}
+.bike-wrap:nth-of-type(2){{bottom:clamp(42px, 8.5vh, 77px)!important;}}
+@media (max-height: 600px) {{
+  .bike{{transform:scale(.7)!important;transform-origin:bottom center;}}
+}}
 @keyframes ride{{from{{left:-240px;}}to{{left:110%;}}}}
 .bike{{position:relative;width:140px;height:80px;}}
 .wheel{{position:absolute;bottom:0;border-radius:50%;border:4px solid;animation:spin .38s linear infinite;}}
@@ -771,12 +1026,12 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 .puff:nth-child(2){{left:-14px;animation-delay:.28s;}}
 .puff:nth-child(3){{left:-26px;animation-delay:.56s;}}
 @keyframes puff{{0%{{transform:scale(.5) translateY(0);opacity:.6;}}100%{{transform:scale(2.5) translateY(-24px);opacity:0;}}}}
-.content{{position:relative;z-index:20;text-align:center;padding:38px 20px;max-width:740px;margin-bottom:90px;}}
+.content{{position:relative;z-index:20;text-align:center;padding:12px 20px;max-width:740px;margin-bottom:clamp(30px, 8vh, 90px);}}
 .eyebrow{{font-family:'Cinzel',serif;font-size:11px;letter-spacing:10px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:22px;animation:fu .8s ease both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(10px, 2vh, 22px);animation:fu .8s ease both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(30px);}}to{{opacity:1;transform:translateY(0);}}}}
 .quote{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(20px,3.8vw,38px);line-height:1.75;
+  font-size:clamp(16px,4vh,32px);line-height:1.6;
   background:linear-gradient(135deg,#e2d5f8,#c4b5fd,#93c5fd);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   filter:drop-shadow(0 0 20px rgba(139,92,246,.45));animation:fu 1.5s ease .4s both;opacity:0;}}
@@ -868,7 +1123,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 
 /* ── Phase system ── */
 .phase{{display:none;flex-direction:column;align-items:center;
-  justify-content:center;text-align:center;padding:28px 20px;
+  justify-content:center;text-align:center;padding:clamp(10px, 2vh, 28px) 20px;
   position:relative;z-index:10;width:100%;max-width:700px;margin:0 auto;}}
 .phase.active{{display:flex;}}
 
@@ -884,22 +1139,22 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
   100%{{transform:translateY(-10vh) scale(1);opacity:0;}}
 }}
 .wish-label{{font-family:'Cinzel',serif;font-size:12px;letter-spacing:11px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:28px;animation:fu 1s ease .3s both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(12px, 3vh, 28px);animation:fu 1s ease .3s both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(24px);}}to{{opacity:1;transform:translateY(0);}}}}
-.wish-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(28px,6.5vw,70px);
+.wish-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(24px,7.5vh,64px);
   font-weight:900;line-height:1.18;
   background:linear-gradient(135deg,#fbbf24,#fde68a,#f59e0b,#fbbf24);
   background-size:300% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
   background-clip:text;filter:drop-shadow(0 0 38px rgba(251,191,36,.9));
-  animation:fu 1.2s ease .6s both,gSh 3s linear 2s infinite;opacity:0;margin-bottom:16px;}}
+  animation:fu 1.2s ease .6s both,gSh 3s linear 2s infinite;opacity:0;margin-bottom:clamp(8px, 1.5vh, 16px);}}
 @keyframes gSh{{from{{background-position:0% center;}}to{{background-position:300% center;}}}}
 .wish-sub{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(14px,2vw,18px);color:rgba(196,181,253,.75);
-  animation:fu 1s ease 1.1s both;opacity:0;margin-bottom:50px;}}
+  font-size:clamp(13px,2.2vh,18px);color:rgba(196,181,253,.75);
+  animation:fu 1s ease 1.1s both;opacity:0;margin-bottom:clamp(20px, 4vh, 50px);}}
 
 /* ── Phase 1: Cake ── */
 .cake-eyebrow{{font-family:'Cinzel',serif;font-size:11px;letter-spacing:10px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:14px;animation:fu .8s ease both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(6px, 1.5vh, 14px);animation:fu .8s ease both;opacity:0;}}
 .cake-scene{{position:relative;display:inline-block;margin:8px auto 14px;}}
 .candles{{display:flex;justify-content:center;gap:16px;margin-bottom:5px;position:relative;z-index:10;}}
 .candle{{position:relative;width:13px;height:46px;border-radius:4px 4px 2px 2px;overflow:visible;}}
@@ -964,7 +1219,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 
 /* ── Phase 2: Celebration ── */
 .cel-title{{font-family:'Cinzel Decorative',serif;
-  font-size:clamp(30px,7vw,80px);font-weight:900;line-height:1.1;
+  font-size:clamp(26px,8vh,72px);font-weight:900;line-height:1.1;
   background:linear-gradient(135deg,#fbbf24,#fde68a,#f59e0b,#fbbf24);
   background-size:400% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
   background-clip:text;filter:drop-shadow(0 0 38px rgba(251,191,36,.98));
@@ -975,7 +1230,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
   100%{{opacity:1;transform:scale(1) translateY(0);filter:blur(0);}}
 }}
 .cel-name{{font-family:'Cinzel Decorative',serif;
-  font-size:clamp(44px,10vw,112px);font-weight:900;letter-spacing:clamp(4px,2vw,16px);
+  font-size:clamp(36px,12vh,96px);font-weight:900;letter-spacing:clamp(4px,2vw,16px);
   background:linear-gradient(135deg,#e879f9,#c084fc,#818cf8,#60a5fa,#a78bfa);
   background-size:500% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
   background-clip:text;
@@ -983,7 +1238,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
             nameSh 2s linear 2s infinite,
             nameGl 3s ease-in-out 2s infinite alternate,
             nameFloat 5s ease-in-out 3s infinite;
-  opacity:0;margin-bottom:28px;}}
+  opacity:0;margin-bottom:clamp(12px, 3vh, 28px);}}
 @keyframes nameSh{{from{{background-position:0% center;}}to{{background-position:500% center;}}}}
 @keyframes nameGl{{
   from{{filter:drop-shadow(0 0 26px rgba(139,92,246,.55));}}
@@ -992,10 +1247,19 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 @keyframes nameFloat{{0%,100%{{transform:translateY(0);}}50%{{transform:translateY(-11px);}}}}
 .cel-div{{width:310px;height:2px;
   background:linear-gradient(90deg,transparent,#fbbf24,#e879f9,#60a5fa,transparent);
-  margin:0 auto 26px;animation:celReveal 1s ease .9s both;opacity:0;}}
+  margin:0 auto clamp(12px, 3vh, 26px);animation:celReveal 1s ease .9s both;opacity:0;}}
 .cel-msg{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(15px,2.4vw,21px);color:rgba(226,213,248,.9);line-height:1.8;
+  font-size:clamp(14px,2.6vh,20px);color:rgba(226,213,248,.9);line-height:1.8;
   animation:celReveal 1s ease 1.2s both;opacity:0;}}
+
+@media (max-height: 600px) {{
+  .cake-scene {{ transform: scale(0.7); margin: 0px auto; transform-origin: center center; }}
+  .cake-eyebrow {{ margin-bottom: 6px; }}
+  .magic-btn {{ padding: 12px 36px !important; font-size: 14px !important; }}
+  .wish-title {{ margin-bottom: 6px; }}
+  .wish-sub {{ margin-bottom: 20px; }}
+  #blowBtn {{ margin-top: 10px !important; }}
+}}
 .cel-ring{{position:fixed;border-radius:50%;border:1px solid;
   top:50%;left:50%;transform:translate(-50%,-50%);
   animation:ringEx 3.5s ease-out infinite;pointer-events:none;z-index:52;}}
@@ -1234,19 +1498,19 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 .spotlight{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
   width:650px;height:650px;border-radius:50%;pointer-events:none;z-index:1;
   transition:background 1s ease;}}
-.wrap{{position:relative;z-index:10;width:100%;max-width:820px;padding:28px 24px;text-align:center;}}
+.wrap{{position:relative;z-index:10;width:100%;max-width:820px;padding:clamp(10px, 2.5vh, 28px) 24px;text-align:center;}}
 .eyebrow{{font-family:'Cinzel',serif;font-size:11px;letter-spacing:10px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:10px;animation:fu .8s ease both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(4px, 1vh, 10px);animation:fu .8s ease both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(20px);}}to{{opacity:1;transform:translateY(0);}}}}
-.sec-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(22px,4vw,44px);
+.sec-title{{font-family:'Cinzel Decorative',serif;font-size:clamp(18px,4.2vh,44px);
   font-weight:900;background:linear-gradient(135deg,#f0eaff,#c4b5fd,#818cf8);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   filter:drop-shadow(0 0 25px rgba(139,92,246,.72));
-  margin-bottom:38px;animation:fu .8s ease .25s both;opacity:0;}}
+  margin-bottom:clamp(12px, 3vh, 38px);animation:fu .8s ease .25s both;opacity:0;}}
 /* Quote card */
 .q-card{{background:rgba(255,255,255,.04);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);
   border:1px solid rgba(255,255,255,.08);border-radius:24px;
-  padding:44px 50px;text-align:left;position:relative;overflow:hidden;
+  padding:clamp(20px, 4vh, 44px) clamp(20px, 4.5vh, 50px);text-align:left;position:relative;overflow:hidden;
   transition:box-shadow .5s ease;animation:qIn .95s cubic-bezier(.34,1.56,.64,1) both;}}
 @keyframes qIn{{from{{opacity:0;transform:translateY(55px) scale(.9);filter:blur(10px);}}to{{opacity:1;transform:translateY(0) scale(1);filter:blur(0);}}}}
 .q-card.exit{{animation:qOut .55s ease forwards;}}
@@ -1256,17 +1520,17 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 .q-card:hover::before{{height:84%;top:8%;}}
 .q-card::after{{content:'';position:absolute;top:-45px;right:-45px;width:190px;height:190px;
   background:radial-gradient(circle,var(--glow) 0%,transparent 70%);pointer-events:none;}}
-.qmark{{font-family:Georgia,serif;font-size:105px;line-height:.5;color:var(--accent);opacity:.11;position:absolute;top:14px;left:14px;}}
+.qmark{{font-family:Georgia,serif;font-size:clamp(60px, 12vh, 105px);line-height:.5;color:var(--accent);opacity:.11;position:absolute;top:14px;left:14px;}}
 .qtext{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(18px,2.8vw,25px);line-height:1.9;color:rgba(226,213,248,.92);
+  font-size:clamp(15px,2.8vh,25px);line-height:1.7;color:rgba(226,213,248,.92);
   position:relative;z-index:1;padding-left:24px;}}
 /* Dots */
-.q-dots{{display:flex;justify-content:center;gap:12px;margin-top:26px;}}
+.q-dots{{display:flex;justify-content:center;gap:12px;margin-top:clamp(12px, 2.5vh, 26px);}}
 .q-dot{{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.18);
   transition:all .4s ease;cursor:pointer;}}
 .q-dot.live{{transform:scale(1.55);box-shadow:0 0 14px var(--a);background:var(--a);}}
 /* Timer bar */
-.timer-bar{{width:100%;height:2px;border-radius:2px;background:rgba(255,255,255,.07);margin-top:18px;overflow:hidden;}}
+.timer-bar{{width:100%;height:2px;border-radius:2px;background:rgba(255,255,255,.07);margin-top:clamp(8px, 1.8vh, 18px);overflow:hidden;}}
 .timer-fill{{height:100%;background:linear-gradient(90deg,#8b5cf6,#fbbf24);border-radius:2px;transition:width linear;}}
 </style></head><body>
 <canvas id="bgCvs"></canvas>
@@ -1342,7 +1606,7 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 .ring{{position:fixed;border-radius:50%;border:1px solid;top:50%;left:50%;
   transform:translate(-50%,-50%);animation:ringEx 5s ease-out infinite;z-index:3;pointer-events:none;}}
 @keyframes ringEx{{0%{{width:0;height:0;opacity:.9;}}100%{{width:230vmax;height:230vmax;opacity:0;}}}}
-.wrap{{position:relative;z-index:10;text-align:center;padding:34px 20px;
+.wrap{{position:relative;z-index:10;text-align:center;padding:clamp(10px, 2.5vh, 34px) 20px;
   animation:grandReveal 2.2s cubic-bezier(.16,1,.3,1) both;}}
 @keyframes grandReveal{{
   0%  {{opacity:0;transform:scale(.07) rotate(-9deg);filter:blur(32px);}}
@@ -1350,32 +1614,32 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
   100%{{opacity:1;transform:scale(1) rotate(0);filter:blur(0);}}
 }}
 .eyebrow{{font-family:'Cinzel',serif;font-size:12px;letter-spacing:12px;color:#fbbf24;
-  text-transform:uppercase;margin-bottom:20px;animation:fu 1s ease 1.1s both;opacity:0;}}
+  text-transform:uppercase;margin-bottom:clamp(10px, 2vh, 20px);animation:fu 1s ease 1.1s both;opacity:0;}}
 @keyframes fu{{from{{opacity:0;transform:translateY(20px);}}to{{opacity:1;transform:translateY(0);}}}}
-.hb{{font-family:'Cinzel Decorative',serif;font-size:clamp(26px,6vw,76px);
+.hb{{font-family:'Cinzel Decorative',serif;font-size:clamp(26px,8vh,76px);
   font-weight:900;line-height:1.1;
   background:linear-gradient(135deg,#fbbf24,#fde68a,#f59e0b,#fbbf24);background-size:400% auto;
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   filter:drop-shadow(0 0 34px rgba(251,191,36,.95));
-  animation:fu 1s ease .5s both,gSh 2s linear 2s infinite;opacity:0;margin-bottom:10px;}}
+  animation:fu 1s ease .5s both,gSh 2s linear 2s infinite;opacity:0;margin-bottom:clamp(6px, 1vh, 10px);}}
 @keyframes gSh{{from{{background-position:0% center;}}to{{background-position:400% center;}}}}
 .name{{font-family:'Cinzel Decorative',serif;
-  font-size:clamp(48px,10.5vw,114px);font-weight:900;letter-spacing:clamp(5px,2vw,18px);
+  font-size:clamp(38px,12vh,96px);font-weight:900;letter-spacing:clamp(5px,2vw,18px);
   background:linear-gradient(135deg,#e879f9,#c084fc,#818cf8,#60a5fa,#a78bfa);background-size:500% auto;
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   animation:fu 1s ease .8s both,nameSh 2s linear 2s infinite,
             nameGl 3s ease-in-out 2s infinite alternate,nameFloat 5s ease-in-out 3s infinite;
-  opacity:0;margin-bottom:28px;}}
+  opacity:0;margin-bottom:clamp(12px, 3vh, 28px);}}
 @keyframes nameSh{{from{{background-position:0% center;}}to{{background-position:500% center;}}}}
 @keyframes nameGl{{from{{filter:drop-shadow(0 0 26px rgba(139,92,246,.55));}}to{{filter:drop-shadow(0 0 72px rgba(139,92,246,1)) drop-shadow(0 0 140px rgba(192,38,211,.65));}}}}
 @keyframes nameFloat{{0%,100%{{transform:translateY(0);}}50%{{transform:translateY(-12px);}}}}
 .divider{{width:350px;height:2px;
   background:linear-gradient(90deg,transparent,#fbbf24,#e879f9,#60a5fa,transparent);
-  margin:0 auto 28px;animation:fu 1s ease 1.4s both;opacity:0;}}
+  margin:0 auto clamp(12px, 3vh, 28px);animation:fu 1s ease 1.4s both;opacity:0;}}
 /* ⭐ REPLACE: Edit subtext below */
 .sub{{font-family:'Playfair Display',serif;font-style:italic;
-  font-size:clamp(16px,2.6vw,24px);color:rgba(226,213,248,.92);
-  text-shadow:0 0 30px rgba(139,92,246,.45);margin-bottom:20px;animation:fu 1s ease 1.8s both;opacity:0;}}
+  font-size:clamp(14px,2.6vh,24px);color:rgba(226,213,248,.92);
+  text-shadow:0 0 30px rgba(139,92,246,.45);margin-bottom:clamp(10px, 2vh, 20px);animation:fu 1s ease 1.8s both;opacity:0;}}
 .sig{{font-family:'Playfair Display',serif;font-style:italic;font-size:14px;
   color:rgba(251,191,36,.45);letter-spacing:3px;animation:fu 1.5s ease 2.4s both;opacity:0;}}
 </style></head><body>
@@ -1482,9 +1746,6 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 def show_navigation(stage: int, total: int = 7) -> None:
     names = {1:"Welcome",2:"Name Reveal",3:"Photo Gallery",
              4:"The Journey",5:"Celebration",6:"Beautiful Truths",7:"Grand Finale"}
-    st.markdown(
-        '<div style="background:rgba(3,3,18,.98);border-top:1px solid rgba(139,92,246,.12);padding:4px 0;">',
-        unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
         if stage > 1:
@@ -1492,7 +1753,7 @@ def show_navigation(stage: int, total: int = 7) -> None:
                 st.session_state.stage -= 1; st.rerun()
     with c2:
         st.markdown(
-            f'<div style="text-align:center;padding:14px 0;">'
+            f'<div style="text-align:center;padding:6px 0;">'
             f'<span style="font-family:Cinzel,serif;font-size:11px;letter-spacing:4px;'
             f'color:rgba(255,255,255,.3);text-transform:uppercase;">'
             f'{names.get(stage,"")}</span></div>',
@@ -1504,7 +1765,6 @@ def show_navigation(stage: int, total: int = 7) -> None:
         else:
             if st.button("↺ Restart", key="btn_rst"):
                 st.session_state.stage = 1; st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1512,65 +1772,128 @@ def show_navigation(stage: int, total: int = 7) -> None:
 # ═══════════════════════════════════════════════════════════════
 def inject_persistent_music() -> None:
     """Inject hidden background audio player that persists across stage navigation.
-    Uses localStorage to track play state and time. Auto-plays on first load.
+    Auto-plays on first ANY user interaction (satisfies browser autoplay policy).
+    Music is always on — cannot be turned off.
     """
     uri = _get_music_data_uri()
     if not uri:
         return
-    
+
     html = f"""
-    <style>
-    #bgMusicPlayer {{ display: none; }}
-    </style>
-    <audio id="bgMusicPlayer" crossorigin="anonymous">
-      <source src="{uri}" type="audio/mpeg">
-    </audio>
     <script>
     (function(){{
       try {{
-        var a = document.getElementById('bgMusicPlayer');
-        if (!a) return;
-        
-        var keyTime = 'bgMusicTime_v1';
-        var keyPlay = 'bgMusicPlaying_v1';
-        var keyFirstLoad = 'bgMusicFirstLoad_v1';
-        
-        a.loop = true;
-        
-        // Restore saved state
-        var savedTime = parseFloat(localStorage.getItem(keyTime) || 0) || 0;
-        var shouldPlay = localStorage.getItem(keyPlay) === '1' || !localStorage.getItem(keyFirstLoad);
-        var isFirstLoad = !localStorage.getItem(keyFirstLoad);
-        
-        a.currentTime = Math.max(0, savedTime - 0.25);
-        
-        // Auto-play on first load, then respect user's choice
-        if (shouldPlay) {{
-          a.play().catch(function(){{}});
+        var parentDoc = window.parent.document;
+        var parentWin = window.parent;
+        if (!parentDoc) return;
+
+        var keyTime      = 'bgMusicTime_v1';
+
+        // ── Find or create global audio element on the parent body ──
+        var a = parentDoc.getElementById('globalBgAudio');
+        var isNew = false;
+        if (!a) {{
+          isNew = true;
+          a = parentDoc.createElement('audio');
+          a.id   = 'globalBgAudio';
+          a.loop = true;
+          a.style.display = 'none';
+          var src = parentDoc.createElement('source');
+          src.src  = "{uri}";
+          src.type = 'audio/mpeg';
+          a.appendChild(src);
+          parentDoc.body.appendChild(a);
         }}
-        
-        localStorage.setItem(keyFirstLoad, '1');
-        
-        // Save state every 500ms
-        setInterval(function(){{
-          try{{
-            localStorage.setItem(keyTime, a.currentTime.toString());
-            localStorage.setItem(keyPlay, (a.paused ? '0' : '1'));
-          }}catch(e){{}}
-        }}, 500);
-        
-        // Save state on page unload
-        window.addEventListener('beforeunload', function(){{
-          try{{
-            localStorage.setItem(keyTime, a.currentTime.toString());
-            localStorage.setItem(keyPlay, (a.paused ? '0' : '1'));
-          }}catch(e){{}}
+
+        // Restore saved playback position
+        if (isNew) {{
+          var savedTime = parseFloat(localStorage.getItem(keyTime) || 0) || 0;
+          a.currentTime = savedTime;
+        }}
+
+        // ── Volume fade-in for a cinematic feel ──
+        function fadeInAudio(audioEl) {{
+          audioEl.volume = 0;
+          var target = 0.8;
+          var fade = setInterval(function() {{
+            if (audioEl.volume < target) {{
+              audioEl.volume = Math.min(target, audioEl.volume + 0.04);
+            }} else {{
+              clearInterval(fade);
+            }}
+          }}, 80);
+        }}
+
+        // ── Always play — no pause allowed ──
+        function playAudio() {{
+          a.play().then(function() {{
+            fadeInAudio(a);
+          }}).catch(function() {{
+            /* Still blocked — will retry on next interaction */
+          }});
+        }}
+
+        // ── Auto-play on FIRST user interaction anywhere on the page ──
+        var interactionEvents = ['click','keydown','scroll','touchstart','pointerdown','mousemove'];
+        var interactionFired  = false;
+
+        function onFirstInteraction() {{
+          if (interactionFired) return;
+          interactionFired = true;
+          interactionEvents.forEach(function(ev) {{
+            parentDoc.removeEventListener(ev, onFirstInteraction, true);
+          }});
+          if (a.paused) playAudio();
+        }}
+
+        interactionEvents.forEach(function(ev) {{
+          parentDoc.addEventListener(ev, onFirstInteraction, {{ capture: true, once: false }});
         }});
-      }} catch(e){{}}
+
+        // Immediate autoplay attempt
+        if (a.paused) {{
+          a.play().then(function() {{
+            fadeInAudio(a);
+            interactionFired = true;
+          }}).catch(function() {{
+            /* Blocked — onFirstInteraction will handle it */
+          }});
+        }}
+
+        // ── Periodically save time and keep music alive ──
+        setInterval(function() {{
+          try {{
+            if (!a.paused) {{
+              localStorage.setItem(keyTime, a.currentTime.toString());
+            }} else {{
+              a.play().catch(function(){{}});
+            }}
+          }} catch(e) {{}}
+        }}, 1000);
+
+        // ── Hide this music component's own iframe ──
+        var frame = window.frameElement;
+        if (frame) {{
+          frame.style.display  = 'none';
+          frame.style.height   = '0px';
+          frame.style.width    = '0px';
+          frame.style.position = 'absolute';
+          var parentContainer = frame.closest('div[data-testid="element-container"]');
+          if (parentContainer) {{
+            parentContainer.style.display = 'none';
+            parentContainer.style.height  = '0px';
+            parentContainer.style.margin  = '0';
+            parentContainer.style.padding = '0';
+          }}
+        }}
+
+      }} catch(e) {{
+        console.error('Global music init failed:', e);
+      }}
     }})();
     </script>
     """
-    
+
     components.html(html, height=10, scrolling=False)
 def main() -> None:
     inject_persistent_music()
