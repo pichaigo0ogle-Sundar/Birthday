@@ -1,4 +1,4 @@
-name: Sync to Hugging Face
+name: Sync to Hugging Face Hub
 on:
   push:
     branches: [main]
@@ -12,16 +12,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Git LFS
-        run: |
-          git lfs install
-          git lfs track "assets/**"
-
-      - name: Push to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          # Overwrite Hugging Face by pushing cleanly
-          git push --force https://Naren1100:$HF_TOKEN@huggingface.co/spaces/Naren1100/birthday main
+      - name: Push to Hub
+        uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: pichaigo0ogle-Sundar/Birthday
+          huggingface_repo_id: Naren1100/birthday
+          hf_token: ${{ secrets.HF_TOKEN }}
+          space_sdk: docker
