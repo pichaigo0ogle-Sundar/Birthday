@@ -418,9 +418,20 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 var musicOn=false;
 function toggleMusic(){{
   musicOn=!musicOn;
-  var a=document.getElementById('bgAudio'),ic=document.getElementById('mIcon'),lb=document.getElementById('mLabel');
-  if(musicOn){{a.play().catch(function(){{}});ic.textContent='♫';lb.textContent='Music On';}}
-  else{{a.pause();ic.textContent='♪';lb.textContent='Music Off';}}
+  var bgPlayer=document.getElementById('bgMusicPlayer');
+  var stagePlayer=document.getElementById('bgAudio');
+  var ic=document.getElementById('mIcon'),lb=document.getElementById('mLabel');
+  if(musicOn){{
+    if(bgPlayer)bgPlayer.play().catch(function(){{}});
+    if(stagePlayer)stagePlayer.play().catch(function(){{}});
+    ic.textContent='♫';lb.textContent='Music On';
+  }}
+  else{{
+    if(bgPlayer)bgPlayer.pause();
+    if(stagePlayer)stagePlayer.pause();
+    ic.textContent='♪';lb.textContent='Music Off';
+  }}
+  try{{localStorage.setItem('bgMusicPlaying_v1', musicOn?'1':'0');}}catch(e){{}}
 }}
 {MAGIC_BTN_JS}
 </script>
@@ -552,27 +563,28 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-eve
 # STAGE 3 — 3D PHOTO GALLERY (dual row + mouse tilt + glow)
 # ═══════════════════════════════════════════════════════════════
 def stage_3() -> None:
+
     # ⭐ REPLACE: Swap picsum.photos URLs with real photo paths/URLs
     row1 = [
-        ["/home/naren/Birthday/assets/sarry.jpeg", "Beautiful Soul"],
-        ["/home/naren/Birthday/assets/selfy.jpeg", "selfie infront mirror"],
-        ["/home/naren/Birthday/assets/kaiking.jpeg", "Kayaking Varkala"],
-        ["/home/naren/Birthday/assets/kodai.jpeg", "KodaiKenal Trip"],
-        ["/home/naren/Birthday/assets/best_for.jpeg", "Beautiful Chaos Together"],
-        ["/home/naren/Birthday/assets/v.jpeg", "Beach Vibes"],
-        ["/home/naren/Birthday/assets/lastyear_bday.jpeg", "Birthday 2025"],
-        ["/home/naren/Birthday/assets/me.jpeg", "black dress vibes"],
-        ["/home/naren/Birthday/assets/bike.jpeg", "Bike Ride Fun"],
+        ["assets/sarry.jpeg", "Beautiful Soul"],
+        ["assets/selfy.jpeg", "selfie infront mirror"],
+        ["assets/kaiking.jpeg", "Kayaking Varkala"],
+        ["assets/kodai.jpeg", "KodaiKenal Trip"],
+        ["assets/best_for.jpeg", "Beautiful Chaos Together"],
+        ["assets/v.jpeg", "Beach Vibes"],
+        ["assets/lastyear_bday.jpeg", "Birthday 2025"],
+        ["assets/me.jpeg", "black dress vibes"],
+        ["assets/bike.jpeg", "Bike Ride Fun"],
     ]
     row2 = [
-        ["/home/naren/Birthday/assets/nandihills.jpeg", "Nandi Hills Vibes"],
-        ["/home/naren/Birthday/assets/trip_2.jpeg", "Road Trip Fun"],
-        ["/home/naren/Birthday/assets/trecking.jpeg", "Trecking with Friends"],
-        ["/home/naren/Birthday/assets/child.jpeg", "Adorable Childhood"],
-        ["/home/naren/Birthday/assets/mygirls.jpeg", "My Beautiful Girls"],
-        ["/home/naren/Birthday/assets/best_friend.jpeg", "Selfie with Best Friend "],
-        ["/home/naren/Birthday/assets/campfire.jpeg", "Camp Fire Memories"],
-        ["/home/naren/Birthday/assets/beauti.jpeg", "So Beauty girl in world"],
+        ["assets/nandihills.jpeg", "Nandi Hills Vibes"],
+        ["assets/trip_2.jpeg", "Road Trip Fun"],
+        ["assets/trecking.jpeg", "Trecking with Friends"],
+        ["assets/child.jpeg", "Adorable Childhood"],
+        ["assets/mygirls.jpeg", "My Beautiful Girls"],
+        ["assets/best_friend.jpeg", "Selfie with Best Friend "],
+        ["assets/campfire.jpeg", "Camp Fire Memories"],
+        ["assets/beauti.jpeg", "So Beauty girl in world"],
     ]
     row1 = [[_path_to_data_uri(src), label] for src, label in row1]
     row2 = [[_path_to_data_uri(src), label] for src, label in row2]
@@ -1496,9 +1508,72 @@ def show_navigation(stage: int, total: int = 7) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# MAIN
+# PERSISTENT BACKGROUND MUSIC
 # ═══════════════════════════════════════════════════════════════
+def inject_persistent_music() -> None:
+    """Inject hidden background audio player that persists across stage navigation.
+    Uses localStorage to track play state and time. Auto-plays on first load.
+    """
+    uri = _get_music_data_uri()
+    if not uri:
+        return
+    
+    html = f"""
+    <style>
+    #bgMusicPlayer {{ display: none; }}
+    </style>
+    <audio id="bgMusicPlayer" crossorigin="anonymous">
+      <source src="{uri}" type="audio/mpeg">
+    </audio>
+    <script>
+    (function(){{
+      try {{
+        var a = document.getElementById('bgMusicPlayer');
+        if (!a) return;
+        
+        var keyTime = 'bgMusicTime_v1';
+        var keyPlay = 'bgMusicPlaying_v1';
+        var keyFirstLoad = 'bgMusicFirstLoad_v1';
+        
+        a.loop = true;
+        
+        // Restore saved state
+        var savedTime = parseFloat(localStorage.getItem(keyTime) || 0) || 0;
+        var shouldPlay = localStorage.getItem(keyPlay) === '1' || !localStorage.getItem(keyFirstLoad);
+        var isFirstLoad = !localStorage.getItem(keyFirstLoad);
+        
+        a.currentTime = Math.max(0, savedTime - 0.25);
+        
+        // Auto-play on first load, then respect user's choice
+        if (shouldPlay) {{
+          a.play().catch(function(){{}});
+        }}
+        
+        localStorage.setItem(keyFirstLoad, '1');
+        
+        // Save state every 500ms
+        setInterval(function(){{
+          try{{
+            localStorage.setItem(keyTime, a.currentTime.toString());
+            localStorage.setItem(keyPlay, (a.paused ? '0' : '1'));
+          }}catch(e){{}}
+        }}, 500);
+        
+        // Save state on page unload
+        window.addEventListener('beforeunload', function(){{
+          try{{
+            localStorage.setItem(keyTime, a.currentTime.toString());
+            localStorage.setItem(keyPlay, (a.paused ? '0' : '1'));
+          }}catch(e){{}}
+        }});
+      }} catch(e){{}}
+    }})();
+    </script>
+    """
+    
+    components.html(html, height=10, scrolling=False)
 def main() -> None:
+    inject_persistent_music()
     inject_global_styles()
     show_progress(st.session_state.stage)
     {
