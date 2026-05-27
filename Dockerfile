@@ -2,22 +2,20 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies if required
+# Install only basic required tools (skipping software-properties-common)
 RUN apt-get update && apt-get install -y \
-    build-essential \
     curl \
-    software-properties-common \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install them
+# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all project files (including assets and app files)
+# Copy all project files and media assets
 COPY . .
 
-# Expose the standard port Hugging Face expects
+# Expose Hugging Face's default port
 EXPOSE 7860
 
 # Run Streamlit on port 7860
