@@ -463,9 +463,9 @@ def inject_global_styles() -> None:
     """, unsafe_allow_html=True)
 
 
-def show_progress(current: int, total: int = 7) -> None:
-    names = {1:"Welcome",2:"The Reveal",3:"Gallery",4:"Journey",
-             5:"Celebration",6:"Truths",7:"Finale"}
+def show_progress(current: int, total: int = 4) -> None:
+    names = {1:"Welcome",2:"The Reveal",3:"Gallery",
+             4:"Celebration"}
     dots = "".join(
         f'<div class="pg-dot {"live" if i==current else "done" if i<current else ""}"></div>'
         for i in range(1, total + 1)
@@ -1263,12 +1263,17 @@ confCvs.width=window.innerWidth; confCvs.height=window.innerHeight;
 function triggerCelebration(){{
   document.body.style.background='#030312';
   document.body.style.transition='background 1.2s ease';
-  switchPhase('ph1','ph2');
-  fwActive=true; fwLoop();
-  confPts=[];for(var i=0;i<300;i++){{var c=new Conf();c.y=Math.random()*-500;confPts.push(c);}}
-  goldPts=[];for(var i=0;i<160;i++){{var g=new GP();g.y=Math.random()*-400;goldPts.push(g);}}
-  confLoop();
-  var cnt=0;(function af(){{launchFw();launchFw();cnt++;setTimeout(af,cnt<16?320:1300);}})();
+  /* Skip celebration phase - go directly to finale */
+  showFinale();
+}}
+
+function showFinale(){{
+  var finale=document.getElementById('finale');
+  if(finale){{
+    finale.style.display='flex';
+    setTimeout(function(){{finale.style.opacity='1';}},100);
+    createBalloons();
+  }}
 }}
 function FWPt(x,y,h){{
   this.x=x;this.y=y;this.h=h;
@@ -1308,8 +1313,82 @@ GP.prototype.reset=function(){{this.x=Math.random()*confCvs.width;this.y=-15;thi
 GP.prototype.update=function(){{this.x+=this.vx;this.y+=this.vy;if(this.y>confCvs.height+10)this.reset();}};
 GP.prototype.draw=function(){{confCtx.save();confCtx.globalAlpha=this.op;confCtx.beginPath();confCtx.arc(this.x,this.y,this.sz,0,Math.PI*2);confCtx.fillStyle='#fbbf24';confCtx.shadowBlur=11;confCtx.shadowColor='rgba(251,191,36,.7)';confCtx.fill();confCtx.restore();}};
 function confLoop(){{confCtx.clearRect(0,0,confCvs.width,confCvs.height);confPts.forEach(function(c){{c.update();c.draw();}});goldPts.forEach(function(g){{g.update();g.draw();}});requestAnimationFrame(confLoop);}}
+
+/* Balloon animation */
+function createBalloons(){{
+  var balloonContainer=document.getElementById('balloonContainer');
+  if(!balloonContainer){{
+    balloonContainer=document.createElement('div');
+    balloonContainer.id='balloonContainer';
+    balloonContainer.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99;';
+    document.body.appendChild(balloonContainer);
+  }}
+  
+  var colors=['#fbbf24','#e879f9','#60a5fa','#34d399','#fb923c','#a78bfa','#ec4899'];
+  
+  for(var i=0;i<12;i++){{
+    var balloon=document.createElement('div');
+    var col=colors[Math.floor(Math.random()*colors.length)];
+    var left=Math.random()*100;
+    var delay=Math.random()*1.5;
+    var duration=Math.random()*3+5;
+    var drift=Math.random()*80-40;
+    
+    balloon.style.position='fixed';
+    balloon.style.width='30px';
+    balloon.style.height='40px';
+    balloon.style.borderRadius='50% 50% 50% 0';
+    balloon.style.background=col;
+    balloon.style.boxShadow='0 0 15px '+col+'50,-8px -8px 15px '+col+'30';
+    balloon.style.bottom='-50px';
+    balloon.style.left=left+'%';
+    balloon.style.transform='rotate(-45deg)';
+    balloon.style.zIndex='98';
+    
+    var keyframes='@keyframes balloon'+i+'{{0%{{bottom:-50px;opacity:1;left:'+left+'%;}}100%{{bottom:120vh;opacity:0;left:'+(left+drift)+'%;}}}}';
+    if(!document.getElementById('balloonStyle'+i)){{
+      var style=document.createElement('style');
+      style.id='balloonStyle'+i;
+      style.textContent=keyframes;
+      document.head.appendChild(style);
+    }}
+    
+    balloon.style.animation='balloon'+i+' '+duration+'s ease-in '+delay+'s forwards';
+    balloonContainer.appendChild(balloon);
+  }}
+}}
+
 window.addEventListener('resize',function(){{fwCvs.width=window.innerWidth;fwCvs.height=window.innerHeight;confCvs.width=window.innerWidth;confCvs.height=window.innerHeight;}});
 </script>
+
+<div id="finale" style="display:none;opacity:0;transition:opacity 2s ease;position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg,rgba(3,3,18,0.85),rgba(30,15,50,0.9));flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:100;padding:20px;">
+  <div style="position:relative;margin-bottom:30px;">
+    <h1 style="font-family:'Cinzel Decorative',serif;font-size:clamp(38px,12vh,96px);font-weight:900;letter-spacing:clamp(5px,2vw,18px);background:linear-gradient(135deg,#fbbf24,#fde68a,#f59e0b,#fbbf24);background-size:400% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 30px rgba(251,191,36,.7));animation:slideInDown 1s cubic-bezier(.34,1.56,.64,1) .3s both,pulse 2s ease 1.5s infinite;margin:0 0 10px 0;text-shadow:0 0 40px rgba(251,191,36,.4);">HAPPY BIRTHDAY</h1>
+  </div>
+  <div style="font-family:'Cinzel Decorative',serif;font-size:clamp(38px,12vh,96px);font-weight:900;letter-spacing:clamp(5px,2vw,18px);background:linear-gradient(135deg,#e879f9,#c084fc,#818cf8,#60a5fa,#a78bfa);background-size:500% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:slideInUp 1s cubic-bezier(.34,1.56,.64,1) .5s both,glow 2s ease 1.8s infinite;margin-bottom:20px;text-shadow:0 0 50px rgba(139,92,246,.5);">POOJA</div>
+  <div style="width:350px;height:2px;background:linear-gradient(90deg,transparent,#fbbf24,#e879f9,#60a5fa,transparent);margin-bottom:20px;animation:slideInUp 1s ease .7s both;"></div>
+  <p style="font-family:'Playfair Display',serif;font-style:italic;font-size:clamp(14px,2.6vh,24px);color:rgba(226,213,248,.92);text-shadow:0 0 30px rgba(139,92,246,.45);margin-bottom:10px;animation:slideInUp 1s ease .9s both;opacity:0;">You make every moment brighter just by being yourself.</p>
+  <p style="font-family:'Playfair Display',serif;font-style:italic;font-size:14px;color:rgba(251,191,36,.45);letter-spacing:3px;animation:slideInUp 1s ease 1.1s both;opacity:0;">— Made with warmth & wonder —</p>
+  <style>
+    @keyframes slideInDown {{
+      from {{ opacity:0;transform:translateY(-40px) scale(.8);filter:blur(10px); }}
+      to {{ opacity:1;transform:translateY(0) scale(1);filter:blur(0); }}
+    }}
+    @keyframes slideInUp {{
+      from {{ opacity:0;transform:translateY(30px);filter:blur(5px); }}
+      to {{ opacity:1;transform:translateY(0);filter:blur(0); }}
+    }}
+    @keyframes pulse {{
+      0%,100% {{ filter:drop-shadow(0 0 20px rgba(251,191,36,.7)); }}
+      50% {{ filter:drop-shadow(0 0 40px rgba(251,191,36,1)); }}
+    }}
+    @keyframes glow {{
+      0%,100% {{ filter:drop-shadow(0 0 30px rgba(139,92,246,.6)); }}
+      50% {{ filter:drop-shadow(0 0 60px rgba(139,92,246,1)) drop-shadow(0 0 100px rgba(192,38,211,.8)); }}
+    }}
+  </style>
+</div>
+
 </body></html>"""
     render_html(html, height=600, scrolling=False)
 
@@ -1472,9 +1551,9 @@ canvas{{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 # ═══════════════════════════════════════════════════════════════
 # NAVIGATION
 # ═══════════════════════════════════════════════════════════════
-def show_navigation(stage: int, total: int = 7) -> None:
+def show_navigation(stage: int, total: int = 4) -> None:
     names = {1:"Welcome",2:"Name Reveal",3:"Photo Gallery",
-             4:"The Journey",5:"Celebration",6:"Beautiful Truths",7:"Grand Finale"}
+             4:"Grand Finale"}
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
         if stage > 1:
@@ -1627,12 +1706,12 @@ def inject_persistent_music() -> None:
 def main() -> None:
     inject_persistent_music()
     inject_global_styles()
-    show_progress(st.session_state.stage)
+    show_progress(st.session_state.stage, total=4)
     {
         1: stage_1, 2: stage_2, 3: stage_3,
-        4: stage_5, 5: stage_7,
+        4: stage_5,
     }[st.session_state.stage]()
-    show_navigation(st.session_state.stage)
+    show_navigation(st.session_state.stage, total=4)
 
 
 if __name__ == "__main__":
