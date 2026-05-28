@@ -1263,15 +1263,16 @@ confCvs.width=window.innerWidth; confCvs.height=window.innerHeight;
 function triggerCelebration(){{
   document.body.style.background='#030312';
   document.body.style.transition='background 1.2s ease';
-  /* Skip celebration phase - go directly to finale */
-  showFinale();
+  /* Show finale immediately after blowing */
+  setTimeout(function(){{
+    showFinale();
+  }}, 500);
 }}
 
 function showFinale(){{
   var finale=document.getElementById('finale');
   if(finale){{
-    finale.style.display='flex';
-    setTimeout(function(){{finale.style.opacity='1';}},100);
+    finale.style.opacity='1';
     createBalloons();
   }}
 }}
@@ -1361,7 +1362,7 @@ function createBalloons(){{
 window.addEventListener('resize',function(){{fwCvs.width=window.innerWidth;fwCvs.height=window.innerHeight;confCvs.width=window.innerWidth;confCvs.height=window.innerHeight;}});
 </script>
 
-<div id="finale" style="display:none;opacity:0;transition:opacity 2s ease;position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg,rgba(3,3,18,0.85),rgba(30,15,50,0.9));flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:100;padding:20px;">
+<div id="finale" style="display:flex;opacity:0;transition:opacity 2s ease;position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg,rgba(3,3,18,0.85),rgba(30,15,50,0.9));flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:100;padding:20px;pointer-events:none;">
   <div style="position:relative;margin-bottom:30px;">
     <h1 style="font-family:'Cinzel Decorative',serif;font-size:clamp(38px,12vh,96px);font-weight:900;letter-spacing:clamp(5px,2vw,18px);background:linear-gradient(135deg,#fbbf24,#fde68a,#f59e0b,#fbbf24);background-size:400% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 30px rgba(251,191,36,.7));animation:slideInDown 1s cubic-bezier(.34,1.56,.64,1) .3s both,pulse 2s ease 1.5s infinite;margin:0 0 10px 0;text-shadow:0 0 40px rgba(251,191,36,.4);">HAPPY BIRTHDAY</h1>
   </div>
